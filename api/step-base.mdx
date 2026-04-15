@@ -1,0 +1,152 @@
+---
+title: "StepBase class — RoseLine API reference"
+description: "API reference for StepBase<TBag, TError> and StepBase<TBag>: ProcessAsync abstract method, Next(), Stop(), and ThrowStepError() for controlling pipeline flow."
+---
+
+`StepBase` is the abstract base class you extend to create a pipeline step. Subclass it, override `ProcessAsync`, and end every code path with exactly one of `Next`, `Stop`, or `ThrowStepError` to tell the pipeline what to do next.
+
+## Class variants
+
+| Class | Error type |
+|---|---|
+| `StepBase<TBag, TError>` | Your custom `TError : StepError` |
+| `StepBase<TBag>` | `StepError` (built-in) |
+
+```csharp
+public abstract class StepBase<TBag, TError> : IStep<TBag, TError>
+    where TBag : BagBase
+    where TError : StepError, new()
+
+public abstract class StepBase<TBag> : IStep<TBag>
+    where TBag : BagBase
+```
+
+---
+
+## Abstract method
+
+### ProcessAsync
+
+```csharp
+protected abstract Task<TBag> ProcessAsync(TBag input);
+```
+
+Override this method to implement your step's logic. Receive the current bag, do your work, then return the (possibly modified) bag via one of the three flow-control helpers below.
+
+<ParamField path="input" type="TBag" required>
+  The bag as it exists after the previous step ran. Treat it as your read source — use `with` expressions to produce a modified copy rather than mutating it in place.
+</ParamField>
+
+<ResponseField name="return" type="Task<TBag>">
+  A task whose result is the bag to hand to the next step. In practice your `return` statements should always go through `Next`, `Stop`, or `ThrowStepError`, each of which returns a `TBag`.
+</ResponseField>
+
+<Warning>
+If `ProcessAsync` throws an unhandled exception, the pipeline catches it automatically. It creates a new `TError` instance, sets `Message` to the full exception string, sets `IsUnhandledError = true`, and halts execution. You do not need to wrap every line in try/catch — but you should use `ThrowStepError` for known, expected failure conditions so you can attach structured error information.
+</Warning>
+
+---
+
+## Flow-control methods
+
+Exactly one of the three methods below must be called per `ProcessAsync` invocation. They are `protected`, so they are only accessible from within your step subclass.
+
+### Next
+
+```csharp
+protected TBag Next(TBag output)
+```
+
+Signals that this step succeeded and the pipeline should continue to the next step.
+
+<ParamField path="output" type="TBag" required>
+  The bag to pass to the next step.
+</ParamField>
+
+<ResponseField name="return" type="TBag">
+  The same `output` value, so you can write `return Next(bag with { ... })`.
+</ResponseField>
+
+---
+
+### Stop
+
+```csharp
+protected TBag Stop(TBag output)
+```
+
+Halts the pipeline gracefully. No further steps run, `ExecutionResult.IsSuccess` is `true`, and `ExecutionResult.Error` is `null`.
+
+<ParamField path="output" type="TBag" required>
+  The bag to capture as the final result.
+</ParamField>
+
+<ResponseField name="return" type="TBag">
+  The same `output` value.
+</ResponseField>
+
+---
+
+### ThrowStepError
+
+```csharp
+// Two-parameter generic variant
+protected TBag ThrowStepError(TError error)
+
+// Single-type-parameter variant
+protected TBag ThrowStepError(StepError error)
+```
+
+Records a structured error on the step and halts the pipeline. `ExecutionResult.IsSuccess` becomes `false` and `ExecutionResult.Error` is populated with the provided object. The framework automatically sets `error.Step` to the class name of the failing step before returning.
+
+<ParamField path="error" type="TError (or StepError)" required>
+  The populated error object. Set `Message` and any custom fields before passing it in. Do **not** set `Step` or `IsUnhandledError` — those are set by the framework.
+</ParamField>
+
+<ResponseField name="return" type="TBag">
+  The bag at the moment the error occurred (unchanged), so the method fits into a `return` expression.
+</ResponseField>
+
+---
+
+## IStep interface methods (implemented by StepBase)
+
+`StepBase` provides sealed implementations of all `IStep` interface members. You do not call these directly, but the pipeline does.
+
+| Member | Signature | Description |
+|---|---|---|
+| `ExecuteAsync` | `Task<TBag> IStep.ExecuteAsync(TBag input)` | Calls your `ProcessAsync`, catches unhandled exceptions |
+| `AddPipeline` | `void IStep.AddPipeline(Pipeline<TBag, TError> pipeline)` | Called by `Pipeline.AddStep` to link the step back to its pipeline |
+| `GetError` | `TError? IStep.GetError()` | Returns the error set by `ThrowStepError`, or `null` |
+| `IsContinueProcess` | `bool IStep.IsContinueProcess()` | Returns `true` after `Next`, `false` after `Stop` or `ThrowStepError` |
+
+---
+
+## Example
+
+```csharp
+public class ValidateOrderStep : StepBase<OrderBag, OrderError>
+{
+    protected override async Task<OrderBag> ProcessAsync(OrderBag input)
+    {
+        if (input.OrderId <= 0)
+        {
+            return ThrowStepError(new OrderError
+            {
+                Message = "OrderId must be a positive integer.",
+                Code = "INVALID_ORDER_ID"
+            });
+        }
+
+        var order = await _repository.FindAsync(input.OrderId);
+
+        if (order is null)
+        {
+            // Gracefully stop — nothing to process, not an error
+            return Stop(input);
+        }
+
+        return Next(input with { Order = order });
+    }
+}
+```

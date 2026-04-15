@@ -1,0 +1,160 @@
+---
+title: "Pipeline class — RoseLine API reference"
+description: "API reference for Pipeline<TBag, TError> and Pipeline<TBag>: constructor, AddStep, AddRangeStep, ExecuteAsync, and the Steps and CurrentStepIndex properties."
+---
+
+`Pipeline` is the entry point for building and running a RoseLine pipeline. You pass in a data bag on construction, register steps with `AddStep` or `AddRangeStep`, and then call `ExecuteAsync` to run every step in order, stopping early on error or when a step calls `Stop`.
+
+## Class variants
+
+RoseLine ships two sealed generic classes:
+
+| Class | Error type | Use when |
+|---|---|---|
+| `Pipeline<TBag, TError>` | Your custom `TError : StepError` | You want a strongly-typed custom error class |
+| `Pipeline<TBag>` | `StepError` (built-in) | No custom error fields are needed |
+
+```csharp
+public sealed class Pipeline<TBag, TError>
+    where TBag : BagBase
+    where TError : StepError, new()
+
+public sealed class Pipeline<TBag>
+    where TBag : BagBase
+```
+
+<Note>
+`Pipeline<TBag>` is a convenience wrapper. Its `ExecuteAsync` method returns `Task<ExecutionResult<TBag, StepError>>` rather than a generic `TError`. Use `Pipeline<TBag, TError>` whenever you need custom error properties.
+</Note>
+
+---
+
+## Constructor
+
+```csharp
+public Pipeline(TBag? pipeDto)
+```
+
+Creates a new pipeline and sets the initial bag that will be threaded through each step.
+
+<ParamField path="pipeDto" type="TBag" required>
+  The data bag to process. Must not be `null` — an `ArgumentNullException` is thrown immediately if it is.
+</ParamField>
+
+---
+
+## Methods
+
+### AddStep
+
+```csharp
+public Pipeline<TBag, TError> AddStep(IStep<TBag, TError> step)
+```
+
+Appends a single step to the pipeline's step list and registers the pipeline back onto the step so that the step can read `CurrentStepIndex` and call flow-control helpers.
+
+<ParamField path="step" type="IStep<TBag, TError>" required>
+  The step instance to add. Steps are executed in the order they are added.
+</ParamField>
+
+<ResponseField name="return" type="Pipeline<TBag, TError>">
+  The same pipeline instance, enabling fluent method chaining.
+</ResponseField>
+
+---
+
+### AddRangeStep
+
+```csharp
+public Pipeline<TBag, TError> AddRangeStep(List<IStep<TBag, TError>> steps)
+```
+
+Appends a list of steps to the pipeline in one call.
+
+<ParamField path="steps" type="List<IStep<TBag, TError>>" required>
+  An ordered list of steps. Steps are appended in list order.
+</ParamField>
+
+<ResponseField name="return" type="Pipeline<TBag, TError>">
+  The same pipeline instance, enabling fluent method chaining.
+</ResponseField>
+
+<Warning>
+`AddRangeStep` does not call `AddPipeline` on the added steps, which means steps added through this method cannot use `ThrowStepError` or access the pipeline reference inside `ProcessAsync`. Use `AddStep` for each step individually if your steps need to call `ThrowStepError` or handle errors. `AddRangeStep` is safe only for steps that always call `Next` or `Stop`.
+</Warning>
+
+---
+
+### ExecuteAsync
+
+```csharp
+public async Task<ExecutionResult<TBag, TError>> ExecuteAsync()
+```
+
+Runs each step in sequence, passing the bag output from one step as the input to the next. Execution stops early when any step calls `Stop` or `ThrowStepError`.
+
+<ResponseField name="return" type="Task<ExecutionResult<TBag, TError>>">
+  An `ExecutionResult` containing `IsSuccess`, the final `Bag` state, and the `Error` if a step failed. See [ExecutionResult](/api/execution-result) for full details.
+</ResponseField>
+
+---
+
+## Properties
+
+### Steps
+
+```csharp
+public List<IStep<TBag, TError>> Steps { get; }
+```
+
+<ResponseField name="Steps" type="List<IStep<TBag, TError>>">
+  The ordered list of all steps registered on this pipeline. The list is initialized empty and populated via `AddStep` / `AddRangeStep`.
+</ResponseField>
+
+---
+
+### CurrentStep
+
+```csharp
+public IStep<TBag, TError>? CurrentStep { get; private set; }
+```
+
+<ResponseField name="CurrentStep" type="IStep<TBag, TError>?">
+  The step that most recently finished executing. `null` before `ExecuteAsync` has run any step. Updated after each step completes.
+</ResponseField>
+
+---
+
+### CurrentStepIndex
+
+```csharp
+public int CurrentStepIndex { get; private set; } = 0;
+```
+
+<ResponseField name="CurrentStepIndex" type="int">
+  The zero-based index into `Steps` of the currently executing step. Starts at `0` and increments after each step that calls `Next`. When a step calls `Stop` or `ThrowStepError`, the index is not incremented further.
+</ResponseField>
+
+---
+
+## Example
+
+```csharp
+var bag = new OrderBag { OrderId = 42 };
+
+var result = await new Pipeline<OrderBag, OrderError>(bag)
+    .AddStep(new ValidateOrderStep())
+    .AddStep(new ReserveInventoryStep())
+    .AddStep(new ChargePaymentStep())
+    .AddStep(new SendConfirmationStep())
+    .ExecuteAsync();
+
+if (result.IsSuccess)
+{
+    Console.WriteLine("Order processed.");
+}
+else
+{
+    Console.WriteLine($"Failed at {result.Error?.Step}: {result.Error?.Message}");
+}
+```

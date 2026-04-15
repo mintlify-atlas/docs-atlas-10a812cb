@@ -1,0 +1,87 @@
+---
+title: "Data bags: passing state through pipelines"
+description: "Data bags in RoseLine are C# records that inherit BagBase. Each step uses the with expression to produce an immutable copy, keeping earlier state intact."
+---
+
+A data bag is the shared state object that travels through every step in a pipeline. Instead of using a mutable object that any step can silently overwrite, RoseLine models bags as C# records. Each step receives the bag from the previous step, creates a modified copy using the `with` expression, and passes that copy forward. The original bag handed to a step is never mutated — the previous step's version remains unchanged.
+
+## BagBase
+
+All bags extend the abstract record `BagBase`:
+
+```csharp
+public abstract record BagBase;
+```
+
+There are no required properties on `BagBase` itself. It exists solely to act as the type constraint on `Pipeline<TBag>` and `StepBase<TBag>`, ensuring the pipeline only accepts valid bag types.
+
+## Why records?
+
+C# records come with value-based equality and the `with` expression built in. The `with` expression lets you create a copy of a record with selected properties changed, leaving all other properties at their original values. This gives each step an isolated snapshot of the data rather than a reference to a shared object.
+
+<Note>
+The `with` expression is available on C# records (C# 9 and later). It produces a shallow copy — reference-type properties such as `List<string>` are copied by reference, not deep-cloned. If a step modifies the list in place, that change is visible through the original reference. Create a new list when you need true isolation.
+</Note>
+
+## Defining a bag
+
+Declare your bag as a `sealed record` (or `record`) that extends `BagBase` and add the properties your pipeline needs.
+
+```csharp
+public sealed record ExampleBag : BagBase
+{
+    public List<string> Users { get; set; } = [];
+}
+```
+
+This is the `ExampleBag` used throughout the test project. It carries a single `Users` list that steps populate and modify as the pipeline runs.
+
+## Using a bag inside a step
+
+A step receives the bag as its `input` parameter. To produce a modified version, use `with` to copy it and override specific properties.
+
+```csharp
+public class GetAllUserStep : StepBase<ExampleBag, CustomError>
+{
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        var users = GetFakeUsers();
+
+        // Create a new copy with only Users changed
+        var output = input with { Users = users };
+
+        return Next(output);
+    }
+
+    private List<string> GetFakeUsers()
+    {
+        return new List<string> { "Çağlar", "Osman", "Ismail" };
+    }
+}
+```
+
+The `input` object is not touched. `output` is a brand-new `ExampleBag` instance with `Users` set to the fetched list and all other properties copied from `input`. The pipeline passes `output` as the `input` to the next step.
+
+## Accessing the final bag
+
+After `ExecuteAsync()` completes, the bag is available on `ExecutionResult.Bag` regardless of whether the run succeeded or ended early. This means you can inspect partial state even when a step fails.
+
+```csharp
+var result = await pipeline.ExecuteAsync();
+
+if (result.IsSuccess)
+{
+    // Final state after all steps
+    Console.WriteLine(string.Join(",", result.Bag.Users));
+}
+else
+{
+    // State at the point of failure
+    Console.WriteLine($"Failed at '{result.Error.Step}'");
+    Console.WriteLine($"Users at failure: {string.Join(",", result.Bag.Users)}");
+}
+```
+
+<Tip>
+Keep bags focused. Only include properties that at least one step in the pipeline actually reads or writes. A bag that carries dozens of fields "just in case" makes it harder to understand what each step depends on and can hide bugs where a step clobbers data it was never supposed to touch.
+</Tip>

@@ -1,0 +1,112 @@
+---
+title: "StepError class — RoseLine API reference"
+description: "StepError is RoseLine's base error class with IsUnhandledError, Step (the failing step name), and Message properties. Extend it to add custom error fields."
+---
+
+`StepError` is the base class for all pipeline errors in RoseLine. When a step calls `ThrowStepError` or throws an unhandled exception, the framework populates a `StepError` instance and surfaces it through `ExecutionResult.Error`. You can use `StepError` directly, or extend it to add domain-specific fields.
+
+## Class definition
+
+```csharp
+public class StepError
+{
+    public bool IsUnhandledError { get; private set; }
+    public string Step { get; private set; }
+    public string Message { get; set; }
+
+    internal void SetUnhandledError() { ... }
+    internal void SetStep(string step) { ... }
+}
+```
+
+---
+
+## Properties
+
+<ResponseField name="IsUnhandledError" type="bool">
+  `true` only when the framework caught an unhandled exception thrown from `ProcessAsync`. When a step calls `ThrowStepError` explicitly, this stays `false`. Use this flag to distinguish expected business errors from unexpected runtime failures.
+</ResponseField>
+
+<ResponseField name="Step" type="string">
+  The class name of the step where the error occurred (for example, `"ValidateOrderStep"`). Set automatically by the framework using reflection — you never assign this yourself.
+</ResponseField>
+
+<ResponseField name="Message" type="string">
+  A human-readable description of the error. This is the only property with a public setter. Set it before passing the error to `ThrowStepError`. For unhandled exceptions, the framework sets it to the full `Exception.ToString()` output.
+</ResponseField>
+
+<Warning>
+`Step` and `IsUnhandledError` have `private set` accessors. The framework sets them via internal methods after you call `ThrowStepError`. Do not attempt to set them yourself — doing so will cause a compile error. Only `Message` is yours to assign.
+</Warning>
+
+---
+
+## Reading error info from ExecutionResult
+
+After `ExecuteAsync` returns, check `IsSuccess` and then inspect the error:
+
+```csharp
+var result = await pipeline.ExecuteAsync();
+
+if (!result.IsSuccess && result.Error is not null)
+{
+    if (result.Error.IsUnhandledError)
+    {
+        // An exception escaped ProcessAsync — log it and alert
+        _logger.LogError(
+            "Unhandled error in step {Step}: {Message}",
+            result.Error.Step,
+            result.Error.Message);
+    }
+    else
+    {
+        // A deliberate business error from ThrowStepError
+        Console.WriteLine($"Step '{result.Error.Step}' failed: {result.Error.Message}");
+    }
+}
+```
+
+---
+
+## Extending StepError
+
+Add custom fields by subclassing `StepError`. Declare your subclass and pass it as the `TError` type parameter to `Pipeline<TBag, TError>` and `StepBase<TBag, TError>`.
+
+```csharp
+public class CustomError : StepError
+{
+    public string Code { get; set; }
+    public int Severity { get; set; }
+}
+```
+
+Use it in a step (with `StepBase<TBag, CustomError>`):
+
+```csharp
+return ThrowStepError(new CustomError
+{
+    Message = "Payment gateway timeout.",
+    Code = "PAY_TIMEOUT",
+    Severity = 2
+});
+```
+
+Read the typed error from the result. When using `Pipeline<TBag, CustomError>`, `result.Error` is already typed as `CustomError` — no cast needed:
+
+```csharp
+// With Pipeline<TBag, CustomError> — result.Error is already CustomError
+if (!result.IsSuccess && result.Error is not null)
+{
+    Console.WriteLine($"[{result.Error.Code}] severity={result.Error.Severity}: {result.Error.Message}");
+}
+```
+
+When using the single-type `Pipeline<TBag>`, the error is `StepError` and you can pattern-match to access custom fields:
+
+```csharp
+// With Pipeline<TBag> — result.Error is StepError, cast if needed
+if (result.Error is CustomError custom)
+{
+    Console.WriteLine($"[{custom.Code}] severity={custom.Severity}: {custom.Message}");
+}
+```

@@ -1,0 +1,85 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "RoseLine",
+  "projectDescription": "A flexible .NET pipeline framework for building modular, sequential processing systems with structured error handling and data flow management.",
+  "theme": "luma",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/pipeline",
+              "concepts/steps",
+              "concepts/bags",
+              "concepts/error-handling"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/dependency-injection",
+              "guides/branching-pipeline",
+              "guides/custom-errors"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Classes",
+            "pages": [
+              "api/pipeline",
+              "api/step-base",
+              "api/bag-base",
+              "api/step-error",
+              "api/execution-result"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Sequential step execution with fluent AddStep chaining",
+    "Immutable record-based data bags (BagBase) for safe data flow",
+    "Built-in and custom error handling via StepError and ThrowStepError",
+    "Controlled flow with Next() and Stop() step methods",
+    "Async-first design with Task-based ProcessAsync",
+    "Branching pipelines with mid-pipeline ExecuteAsync checkpoints",
+    "Dependency injection support via constructor injection in steps",
+    "Automatic unhandled exception capture with IsUnhandledError flag"
+  ],
+  "publicApiSurface": [
+    "Pipeline<TBag, TError>",
+    "Pipeline<TBag>",
+    "StepBase<TBag, TError>",
+    "StepBase<TBag>",
+    "BagBase",
+    "StepError",
+    "ExecutionResult<TBag, TError>",
+    "IStep<TBag, TError>",
+    "IStep<TBag>",
+    "Pipeline.AddStep()",
+    "Pipeline.AddRangeStep()",
+    "Pipeline.ExecuteAsync()",
+    "StepBase.Next()",
+    "StepBase.Stop()",
+    "StepBase.ThrowStepError()"
+  ]
+}

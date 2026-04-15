@@ -1,0 +1,70 @@
+---
+title: "How to Install RoseLine in Your .NET 8 Application"
+description: "Add RoseLine to your .NET 8 project using the dotnet CLI, the NuGet Package Manager, or a PackageReference entry in your .csproj file."
+---
+
+RoseLine is published on NuGet as [`RoseLine`](https://www.nuget.org/packages/RoseLine) and targets `net8.0`. You can add it to any compatible .NET project in under a minute using the dotnet CLI or by editing your `.csproj` directly.
+
+<Steps>
+  <Step title="Check prerequisites">
+    RoseLine targets `net8.0`. Make sure your project targets .NET 8 or a compatible framework before installing.
+
+    Verify your installed SDK:
+
+    ```bash
+    dotnet --version
+    ```
+
+    Your `.csproj` should include a compatible target framework:
+
+    ```xml
+    <TargetFramework>net8.0</TargetFramework>
+    ```
+
+    <Note>RoseLine requires `net8.0` or a compatible target framework. Earlier versions of .NET are not supported.</Note>
+  </Step>
+
+  <Step title="Install the package">
+    Choose the installation method that fits your workflow.
+
+    <CodeGroup>
+
+    ```bash dotnet CLI
+    dotnet add package RoseLine
+    ```
+
+    ```xml .csproj
+    <ItemGroup>
+      <PackageReference Include="RoseLine" Version="1.0.3" />
+    </ItemGroup>
+    ```
+
+    </CodeGroup>
+
+    The dotnet CLI automatically selects the latest stable version. To pin to a specific release, append `--version 1.0.3` to the CLI command.
+  </Step>
+
+  <Step title="Restore dependencies">
+    If you added the `PackageReference` manually, restore packages to download the assembly:
+
+    ```bash
+    dotnet restore
+    ```
+
+    The dotnet CLI restores automatically when you use `dotnet add package`.
+  </Step>
+
+  <Step title="Verify the installation">
+    Add a `using` directive to any `.cs` file in your project and confirm your editor resolves the namespace without errors:
+
+    ```csharp
+    using RoseLine;
+    ```
+
+    You should have access to `Pipeline<TBag>`, `StepBase<TBag>`, `BagBase`, `StepError`, and `ExecutionResult<TBag, TError>`.
+  </Step>
+</Steps>
+
+<Note>
+  RoseLine version **1.0.3** is the current stable release on NuGet. The package ID is `RoseLine` (case-insensitive in the dotnet CLI).
+</Note>

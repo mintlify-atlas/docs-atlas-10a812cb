@@ -1,0 +1,119 @@
+---
+title: "Error handling in RoseLine step pipelines"
+description: "RoseLine has two error paths: ThrowStepError() for handled failures and automatic exception capture for unhandled ones. Both appear on ExecutionResult.Error."
+---
+
+RoseLine distinguishes between two kinds of failure: errors you anticipate and handle explicitly inside a step, and exceptions that escape your code unexpectedly. Both paths stop the pipeline immediately and surface the failure through `ExecutionResult`, so the caller always has one consistent place to check for problems.
+
+## Two error types
+
+### 1. Handled errors
+
+A handled error is one you construct yourself and signal deliberately by calling `ThrowStepError()` inside `ProcessAsync`. You decide what the error means and what properties it carries. The pipeline treats this as a clean, expected failure path.
+
+```csharp
+public class GetAllUserStep : StepBase<ExampleBag, CustomError>
+{
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        var users = GetFakeUsers();
+
+        if (!users.Any())
+        {
+            return ThrowStepError(new CustomError
+            {
+                Message  = "Users is not found!",
+                Code     = "A1",
+                Severity = 1,
+            });
+        }
+
+        var output = input with { Users = users };
+        return Next(output);
+    }
+}
+```
+
+When `ThrowStepError` is called, the pipeline exits without running any further steps and returns an `ExecutionResult` with `IsSuccess = false`.
+
+### 2. Unhandled errors
+
+If an exception propagates out of `ProcessAsync` without being caught, RoseLine catches it at the framework level. It constructs a `StepError` (or `TError`) automatically and sets `IsUnhandledError = true` to distinguish it from a handled error.
+
+```csharp
+public class RiskyStep : StepBase<ExampleBag>
+{
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        // If this throws, the framework catches it automatically
+        var data = await SomeExternalService.FetchAsync();
+
+        var output = input with { Users = data };
+        return Next(output);
+    }
+}
+```
+
+<Warning>
+Letting exceptions propagate is not the same as calling `ThrowStepError`. The framework will catch the exception and continue operating, but `IsUnhandledError` will be `true`, which signals to callers that something unexpected went wrong rather than a known business-rule violation. Prefer explicit `ThrowStepError` calls for error conditions you anticipate.
+</Warning>
+
+## StepError properties
+
+`StepError` is the base error class. Both handled and unhandled errors are exposed as this type (or a subclass) on `ExecutionResult.Error`.
+
+| Property | Type | Description |
+|---|---|---|
+| `Message` | `string` | The error message. For unhandled exceptions, this is set to the full `Exception.ToString()` output. |
+| `Step` | `string` | The class name of the step where the error occurred. Set automatically by the framework — you never assign this yourself. |
+| `IsUnhandledError` | `bool` | `true` when the error was created from an uncaught exception; `false` for errors raised via `ThrowStepError`. |
+
+### Custom error classes
+
+Extend `StepError` to add domain-specific fields. You must pass the custom type as the second type parameter on both `Pipeline` and `StepBase`.
+
+```csharp
+public class CustomError : StepError
+{
+    public string Code { get; set; }
+    public int Severity { get; set; }
+}
+```
+
+## Checking the result
+
+After `ExecuteAsync()`, inspect `IsSuccess` first, then read the error if needed.
+
+```csharp
+var result = await pipeline.ExecuteAsync();
+
+if (result.IsSuccess)
+{
+    Console.WriteLine(string.Join(",", result.Bag.Users));
+}
+else
+{
+    // Works for both Pipeline<TBag> and Pipeline<TBag, TError>
+    Console.WriteLine($"Step:             {result.Error.Step}");
+    Console.WriteLine($"IsUnhandledError: {result.Error.IsUnhandledError}");
+    Console.WriteLine($"Message:          {result.Error.Message}");
+
+    // Custom fields are available when using a typed pipeline
+    // Console.WriteLine($"Code:             {result.Error.Code}");
+}
+```
+
+<Note>
+`ThrowStepError` and throwing a C# exception are not interchangeable. `ThrowStepError` is a controlled return path — it sets the error on the step, returns the current bag to the pipeline, and the pipeline exits cleanly. A thrown exception is caught by the framework's `try/catch` wrapper and results in `IsUnhandledError = true`, which typically indicates a programming error or an unexpected external failure rather than a known business condition.
+</Note>
+
+## The Step property is set automatically
+
+You do not need to set `error.Step` yourself. When `ThrowStepError` is called (or when the framework catches an unhandled exception), it reads the class name of the currently executing step from the pipeline's `Steps` list and writes it to the error object.
+
+```csharp
+// The framework does this for you — do not set Step manually
+error.SetStep(this.Pipeline.Steps[index].GetType().Name);
+```
+
+This means `result.Error.Step` will always contain the exact class name of the step that failed, making it straightforward to locate the failure in logs or error messages.

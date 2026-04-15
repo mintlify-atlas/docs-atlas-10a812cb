@@ -1,0 +1,73 @@
+---
+title: "ExecutionResult class — RoseLine API reference"
+description: "ExecutionResult<TBag, TError> is returned by Pipeline.ExecuteAsync(). It contains IsSuccess, the final Bag state, and the Error if any step failed."
+---
+
+`ExecutionResult<TBag, TError>` is the object returned when a pipeline finishes running. It tells you whether the pipeline succeeded, gives you the final state of the data bag, and — if something went wrong — provides the structured error from the failing step.
+
+## Class definition
+
+```csharp
+public sealed class ExecutionResult<TBag, TError>(bool isSuccess, TBag data, TError? error)
+    where TError : StepError
+```
+
+`ExecutionResult` uses a C# primary constructor. You receive it from `Pipeline.ExecuteAsync()` and read its properties — you never construct it yourself.
+
+---
+
+## Properties
+
+<ResponseField name="IsSuccess" type="bool">
+  `true` if the pipeline completed without any step reporting an error. This is `true` both when all steps called `Next` and when a step called `Stop` to halt early — `Stop` is a graceful halt, not a failure. `false` if any step called `ThrowStepError` or threw an unhandled exception.
+</ResponseField>
+
+<ResponseField name="Bag" type="TBag">
+  The data bag as it existed after the last step that ran. If the pipeline ran to completion, this is the output of the final step. If a step failed or stopped early, this reflects the bag state at that point.
+</ResponseField>
+
+<ResponseField name="Error" type="TError?">
+  The error recorded by the failing step, or `null` if `IsSuccess` is `true`. Always check `IsSuccess` (or null-check `Error`) before reading error properties. When populated, `Error.Step` contains the class name of the step that failed and `Error.IsUnhandledError` indicates whether the failure was an unhandled exception.
+</ResponseField>
+
+---
+
+## IsSuccess and Stop
+
+`IsSuccess` being `true` does **not** mean every step ran. When a step calls `Stop`, the pipeline halts immediately — no subsequent steps execute — but the result is still marked successful with `Error = null`. If you need to know whether the pipeline ran to completion versus stopping early, inspect `CurrentStepIndex` on the pipeline instance after `ExecuteAsync` returns.
+
+---
+
+## Example
+
+```csharp
+var result = await new Pipeline<OrderBag, OrderError>(bag)
+    .AddStep(new ValidateOrderStep())
+    .AddStep(new ReserveInventoryStep())
+    .AddStep(new ChargePaymentStep())
+    .ExecuteAsync();
+
+if (result.IsSuccess)
+{
+    // Bag holds the final state produced by all executed steps
+    Console.WriteLine($"Done. Transaction: {result.Bag.PaymentTransactionId}");
+}
+else
+{
+    // Error is non-null whenever IsSuccess is false
+    var error = result.Error!;
+
+    if (error.IsUnhandledError)
+    {
+        _logger.LogError(
+            "Unexpected failure in {Step}: {Message}",
+            error.Step,
+            error.Message);
+    }
+    else if (error is OrderError orderError)
+    {
+        // Custom error fields are accessible on the concrete type
+        Console.WriteLine($"[{orderError.Code}] {error.Message} (step: {error.Step})");
+    }
+}
+```

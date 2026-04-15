@@ -1,0 +1,70 @@
+---
+title: "BagBase class — RoseLine API reference"
+description: "BagBase is the abstract C# record base class for all RoseLine data bags. Extend it with your own record type to carry typed state through pipeline steps."
+---
+
+`BagBase` is the required base type for every data bag in RoseLine. It carries all the data that flows from step to step through the pipeline. Define your own `sealed record` that inherits from `BagBase` and add whatever typed properties your pipeline needs.
+
+## Class definition
+
+```csharp
+public abstract record BagBase;
+```
+
+`BagBase` is a parameterless abstract C# record with no built-in properties. All structure comes from your subtype.
+
+---
+
+## Why a record?
+
+C# records provide value-based equality and the `with` expression, both of which are important for pipeline data bags:
+
+- **Value semantics** — two bags with the same property values are considered equal, which makes unit testing step logic straightforward.
+- **`with` expressions** — create a shallow copy of the bag with selected properties changed, without mutating the original. Each step receives the bag produced by the previous step and can pass a modified copy forward, keeping the pipeline's data flow explicit and side-effect-free.
+
+<Note>
+Every `with` expression creates a new record instance. If you call `Next(input with { Count = 5 })`, the bag that the next step receives is a distinct object from `input`. Steps that receive the same `input` reference will never observe changes made by a concurrent or subsequent step.
+</Note>
+
+---
+
+## Defining a custom bag
+
+Declare your bag as a `sealed record` that inherits `BagBase`. Add standard auto-properties for all the data your pipeline needs to carry.
+
+```csharp
+public sealed record OrderBag : BagBase
+{
+    public int OrderId { get; set; }
+    public Order? Order { get; set; }
+    public bool IsInventoryReserved { get; set; }
+    public string? PaymentTransactionId { get; set; }
+}
+```
+
+The test suite ships `ExampleBag` as a minimal reference:
+
+```csharp
+public sealed record ExampleBag : BagBase
+{
+    public List<string> Users { get; set; } = [];
+}
+```
+
+---
+
+## Using `with` in a step
+
+Inside `StepBase.ProcessAsync`, use a `with` expression to produce the next bag state and pass it to `Next` or `Stop`:
+
+```csharp
+protected override async Task<OrderBag> ProcessAsync(OrderBag input)
+{
+    var order = await _repository.FindAsync(input.OrderId);
+
+    // input is unchanged; the next step receives a new bag instance
+    return Next(input with { Order = order });
+}
+```
+
+Avoid mutating properties on `input` directly — while C# records allow it when properties have a public setter, doing so makes it harder to reason about which step changed what value.

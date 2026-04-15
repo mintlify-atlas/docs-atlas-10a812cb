@@ -1,0 +1,40 @@
+---
+title: "Introduction to RoseLine, a .NET Pipeline Framework"
+description: "RoseLine is a .NET pipeline framework that lets you chain sequential processing steps with built-in error handling and safe, immutable data flow."
+---
+
+RoseLine is a flexible, open-source pipeline framework for .NET that lets you define and execute a series of processing steps in sequence. Each step receives a typed data bag, performs its work, and passes an updated copy forward. You get structured error handling, flow control, and async-first execution — all without reaching for hand-rolled orchestration logic.
+
+## Key concepts
+
+**Pipeline** — The `Pipeline<TBag>` or `Pipeline<TBag, TError>` class orchestrates execution. You add steps to it, call `ExecuteAsync()`, and inspect the resulting `ExecutionResult` to check for success or errors.
+
+**Steps** — Each unit of work is a class that inherits `StepBase<TBag>` or `StepBase<TBag, TError>`. You override the `ProcessAsync` method to implement your logic. Inside a step, you call `Next()` to continue, `Stop()` to halt gracefully, or `ThrowStepError()` to signal a handled error.
+
+**Data bags** — Bags are C# `record` types that inherit `BagBase`. Because records support non-destructive mutation with the `with` expression, each step creates a new copy of the data rather than mutating shared state — keeping data from previous steps safe.
+
+**Error handling** — Any step can emit a typed error by calling `ThrowStepError()`. RoseLine captures which step failed (`StepError.Step`), the message, and whether the error was unhandled (`StepError.IsUnhandledError`). You can extend `StepError` to add domain-specific fields like error codes or severity levels.
+
+## Why use RoseLine?
+
+Building sequential workflows in .NET often means writing boilerplate to thread data between methods, catch exceptions in multiple places, and decide whether to continue or abort. RoseLine replaces that boilerplate with a consistent structure.
+
+- **Structured steps** — Each step has a single responsibility and a clear contract: receive a bag, return a bag.
+- **Typed error handling** — Define a custom error class with the fields your domain needs. RoseLine records which step threw it, so you always know where failure occurred.
+- **Immutable data flow** — Record-based bags enforce a copy-on-write pattern. A step cannot silently mutate data that earlier steps depend on.
+- **Async support** — `ProcessAsync` returns a `Task<TBag>`, so every step participates naturally in async workflows without extra wrappers.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Add RoseLine to your .NET project via the CLI or NuGet Package Manager
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first pipeline with a bag, steps, and result handling
+  </Card>
+  <Card title="Pipeline" icon="arrow-right-arrow-left" href="/concepts/pipeline">
+    Learn how the Pipeline class sequences and executes your steps
+  </Card>
+  <Card title="Steps" icon="list-check" href="/concepts/steps">
+    Understand how to implement steps, control flow, and handle errors
+  </Card>
+</CardGroup>

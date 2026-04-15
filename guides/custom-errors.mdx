@@ -1,0 +1,184 @@
+---
+title: "Defining custom error types for pipeline steps"
+description: "Extend StepError to add fields like error codes and severity. Pass the custom type as TError to Pipeline<TBag, TError> and StepBase<TBag, TError>."
+---
+
+By default, RoseLine surfaces errors as `StepError` instances. For most production use-cases you will want richer error information—an error code for programmatic handling, a severity level, or any other domain-specific fields. You can add all of that by extending `StepError` and swapping in the two-parameter generic variants of `Pipeline` and `StepBase`.
+
+## The default `StepError` class
+
+Every error in RoseLine starts here. `StepError` carries three properties:
+
+```csharp
+public class StepError
+{
+    // Set automatically when an unhandled exception occurs inside a step
+    public bool IsUnhandledError { get; private set; }
+
+    // The name of the step class where the error originated
+    public string Step { get; private set; }
+
+    // A human-readable description of what went wrong
+    public string Message { get; set; }
+}
+```
+
+`Step` and `IsUnhandledError` are set internally by the framework—you do not set them yourself. `Message` is the only property you assign when calling `ThrowStepError`.
+
+## Creating a custom error class
+
+Extend `StepError` and add whatever properties your domain needs.
+
+```csharp
+public class CustomError : StepError
+{
+    public string Code { get; set; }
+    public int Severity { get; set; }
+}
+```
+
+This is the complete `CustomError` from the RoseLine test project. The `Code` property is suited to programmatic branching after a failure; `Severity` lets callers decide how urgently to respond.
+
+## Using `Pipeline<TBag, TError>` with a custom error
+
+Switch from `Pipeline<TBag>` to `Pipeline<TBag, TError>` and pass your custom error type as the second type argument.
+
+```csharp
+var bag = new ExampleBag { Users = [] };
+
+// TError = CustomError — ExecutionResult.Error will be typed as CustomError
+var pipeline = new Pipeline<ExampleBag, CustomError>(bag);
+```
+
+## Writing a step that throws a custom error
+
+Derive your step from `StepBase<TBag, TError>` and pass a fully initialised `CustomError` to `ThrowStepError`.
+
+```csharp
+public class GetAllUserStep : StepBase<ExampleBag, CustomError>
+{
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        var users = GetFakeUsers();
+
+        if (!users.Any())
+        {
+            return ThrowStepError(new CustomError
+            {
+                Message  = "Users is not found!",
+                Code     = "A1",
+                Severity = 1
+            });
+        }
+
+        var output = input with { Users = users };
+
+        return Next(output);
+    }
+
+    private List<string> GetFakeUsers()
+    {
+        return new List<string> { "Çağlar", "Osman", "Ismail" };
+    }
+}
+```
+
+`ThrowStepError` records the error against the current step and signals the pipeline to stop. The framework automatically populates `Error.Step` with the step class name.
+
+## Reading custom error properties from the result
+
+Because `ExecutionResult<TBag, TError>` is generic, `result.Error` is already typed as `CustomError`—no casting required.
+
+```csharp
+var result = await pipeline.ExecuteAsync();
+
+if (result.IsSuccess)
+{
+    Console.WriteLine(string.Join(",", result.Bag.Users));
+}
+else
+{
+    Console.WriteLine(
+        $"Step: {result.Error.Step}, " +
+        $"IsUnhandledError: {result.Error.IsUnhandledError}, " +
+        $"Code: {result.Error.Code}, " +
+        $"Severity: {result.Error.Severity}");
+}
+```
+
+## Complete end-to-end example
+
+<CodeGroup>
+
+```csharp Bag
+public sealed record ExampleBag : BagBase
+{
+    public List<string> Users { get; set; } = [];
+}
+```
+
+```csharp Custom error
+public class CustomError : StepError
+{
+    public string Code { get; set; }
+    public int Severity { get; set; }
+}
+```
+
+```csharp Step
+public class GetAllUserStep : StepBase<ExampleBag, CustomError>
+{
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        var users = GetFakeUsers();
+
+        if (!users.Any())
+        {
+            return ThrowStepError(new CustomError
+            {
+                Message  = "Users is not found!",
+                Code     = "A1",
+                Severity = 1
+            });
+        }
+
+        var output = input with { Users = users };
+
+        return Next(output);
+    }
+
+    private List<string> GetFakeUsers()
+    {
+        return new List<string> { "Çağlar", "Osman", "Ismail" };
+    }
+}
+```
+
+```csharp Pipeline
+var bag = new ExampleBag { Users = [] };
+var pipeline = new Pipeline<ExampleBag, CustomError>(bag);
+
+pipeline.AddStep(new GetAllUserStep());
+
+var result = await pipeline.ExecuteAsync();
+
+if (result.IsSuccess)
+{
+    Console.WriteLine(string.Join(",", result.Bag.Users));
+    // Output: Çağlar,Osman,Ismail
+}
+else
+{
+    Console.WriteLine(
+        $"Step: {result.Error.Step}, " +
+        $"IsUnhandledError: {result.Error.IsUnhandledError}, " +
+        $"Code: {result.Error.Code}, " +
+        $"Severity: {result.Error.Severity}");
+}
+```
+
+</CodeGroup>
+
+<Tip>
+Use `Code` for programmatic error handling—switch on it to decide whether to retry, redirect the user, or raise an alert. Reserve `Message` for human-readable descriptions in logs and error displays. This separation keeps business logic out of string comparisons.
+</Tip>

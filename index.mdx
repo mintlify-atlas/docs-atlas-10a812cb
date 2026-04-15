@@ -1,97 +1,73 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "RoseLine: .NET Pipeline Framework"
+description: "RoseLine is a flexible .NET pipeline framework for building modular, sequential processing systems with structured error handling and immutable data flow."
 ---
 
-## Setting up
+RoseLine is a .NET library that lets you build sequential processing pipelines where each step can transform data, handle errors gracefully, and control whether execution continues or stops. It targets **net8.0** and is available on NuGet as `RoseLine`.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install RoseLine via the .NET CLI or NuGet Package Manager in minutes
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first pipeline with steps, bags, and error handling
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Core Concepts" icon="book" href="/concepts/pipeline">
+    Understand pipelines, steps, data bags, and flow control
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/pipeline">
+    Full type signatures for every public class and method
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Why RoseLine?
 
-Everything you need to create world-class documentation.
+Many applications need to process data or execute tasks in a defined sequence. Managing errors, passing data between steps, and stopping execution on certain conditions can become complex fast. RoseLine gives you a structured, type-safe way to compose these workflows.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={2}>
+  <Card title="Immutable data flow" icon="shield">
+    Record-based `BagBase` prevents accidental mutation between steps
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Structured error handling" icon="triangle-exclamation">
+    `ThrowStepError` captures which step failed, the error message, and whether it was unhandled
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="Flow control" icon="code-branch">
+    Call `Next()` to continue or `Stop()` to halt the pipeline — no exceptions needed
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="Async-first" icon="bolt">
+    Every step uses `Task`-based `ProcessAsync` for modern async workflows
   </Card>
-</Columns>
+</CardGroup>
 
-## Need inspiration?
+## Get started in 3 steps
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Install the NuGet package">
+    ```bash
+    dotnet add package RoseLine
+    ```
+  </Step>
+  <Step title="Define a bag and a step">
+    ```csharp
+    public record MyBag : BagBase { public string Value { get; set; } }
+
+    public class MyStep : StepBase<MyBag>
+    {
+        protected override async Task<MyBag> ProcessAsync(MyBag input)
+        {
+            var output = input with { Value = "processed" };
+            return Next(output);
+        }
+    }
+    ```
+  </Step>
+  <Step title="Build and execute the pipeline">
+    ```csharp
+    var pipeline = new Pipeline<MyBag>(new MyBag { Value = "initial" });
+    pipeline.AddStep(new MyStep());
+
+    var result = await pipeline.ExecuteAsync();
+    Console.WriteLine(result.Bag.Value); // processed
+    ```
+  </Step>
+</Steps>

@@ -1,0 +1,184 @@
+---
+title: "Defining steps in RoseLine pipelines"
+description: "Steps in RoseLine extend StepBase and implement ProcessAsync. Call Next() to advance, Stop() to halt cleanly, or ThrowStepError() to signal a handled failure."
+---
+
+A step is a self-contained unit of work that receives the current data bag, does something with it — calls a service, transforms data, validates a condition — and then tells the pipeline what to do next. You create a step by extending `StepBase` and implementing one abstract method: `ProcessAsync`. Every implementation must close with exactly one of three flow-control calls so the pipeline knows whether to continue, halt, or surface an error.
+
+## Two base classes
+
+RoseLine provides two abstract base classes that mirror the two `Pipeline` variants.
+
+| Class | Error type | When to use |
+|---|---|---|
+| `StepBase<TBag>` | `StepError` (the base class) | When default error fields (`Message`, `Step`, `IsUnhandledError`) are sufficient |
+| `StepBase<TBag, TError>` | Your custom class extending `StepError` | When you need typed error properties on the result |
+
+Both expose identical `ProcessAsync`, `Next`, `Stop`, and `ThrowStepError` mechanics.
+
+## The ProcessAsync method
+
+`ProcessAsync` is the only method you must implement. It receives the bag as it arrived from the previous step (or the initial bag for the first step) and must return a `Task<TBag>`.
+
+```csharp
+protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+{
+    // ... your logic here ...
+}
+```
+
+The return value must always come from one of the three flow-control helpers described below — never return a raw bag instance directly.
+
+## Flow control methods
+
+### Next() — continue to the next step
+
+Call `Next(output)` when the step completes successfully and the pipeline should move forward.
+
+```csharp
+public class GetAllUserStep : StepBase<ExampleBag, CustomError>
+{
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        var users = GetFakeUsers();
+
+        var output = input with { Users = users };
+
+        return Next(output);
+    }
+
+    private List<string> GetFakeUsers()
+    {
+        return new List<string> { "Çağlar", "Osman", "Ismail" };
+    }
+}
+```
+
+The `output` you pass to `Next` becomes the `input` received by the next step.
+
+### Stop() — halt the pipeline gracefully
+
+Call `Stop(output)` when your business logic determines that no further steps should run, but this is not an error condition. The pipeline sets `IsSuccess = true` on the result and exits the loop.
+
+```csharp
+protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+{
+    if (!input.Users.Any())
+    {
+        // Nothing to process — halt the pipeline cleanly without an error
+        return Stop(input);
+    }
+
+    // Otherwise continue
+    return Next(input);
+}
+```
+
+### ThrowStepError() — signal a handled error
+
+Call `ThrowStepError(error)` when you detect a condition that the caller must be told about explicitly. The pipeline sets `IsSuccess = false`, populates `ExecutionResult.Error`, and stops executing subsequent steps.
+
+```csharp
+// Using the default StepError
+public class GetAllUserStep : StepBase<ExampleBag>
+{
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        var users = GetFakeUsers();
+
+        if (!users.Any())
+        {
+            return ThrowStepError(new StepError { Message = "Users is not found!" });
+        }
+
+        var output = input with { Users = users };
+        return Next(output);
+    }
+}
+```
+
+```csharp
+// Using a custom error type with extra fields
+public class GetAllUserStep : StepBase<ExampleBag, CustomError>
+{
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        var users = GetFakeUsers();
+
+        if (!users.Any())
+        {
+            return ThrowStepError(new CustomError
+            {
+                Message  = "Users is not found!",
+                Code     = "A1",
+                Severity = 1,
+            });
+        }
+
+        var output = input with { Users = users };
+        return Next(output);
+    }
+}
+```
+
+The `Step` property on the error is set automatically by the framework to the class name of the failing step — you never need to set it yourself.
+
+<Warning>
+Every code path inside `ProcessAsync` must end with `return Next(...)`, `return Stop(...)`, or `return ThrowStepError(...)`. Returning a raw bag, returning `null`, or reaching the end of the method without a return causes undefined behaviour because the pipeline relies on these methods to update its internal continuation flag.
+</Warning>
+
+## Unhandled exceptions
+
+If your `ProcessAsync` implementation throws an exception that you do not catch, RoseLine catches it at the framework level. It creates a `StepError` (or `TError` instance) with:
+
+- `IsUnhandledError` set to `true`
+- `Message` set to the full `Exception.ToString()` output
+- `Step` set to the class name of the failing step
+
+The pipeline then exits immediately, just as it does for a handled `ThrowStepError` call, and the exception is surfaced through `ExecutionResult.Error`.
+
+```csharp
+public class RiskyStep : StepBase<ExampleBag>
+{
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        // If this throws, the framework catches it and sets IsUnhandledError = true
+        var data = await SomeExternalService.FetchAsync();
+
+        var output = input with { Users = data };
+        return Next(output);
+    }
+}
+```
+
+```csharp
+var result = await pipeline.ExecuteAsync();
+
+if (!result.IsSuccess && result.Error.IsUnhandledError)
+{
+    Console.WriteLine($"Unexpected failure in '{result.Error.Step}': {result.Error.Message}");
+}
+```
+
+## Dependency injection
+
+Because steps are plain C# classes, you can inject services through the constructor in the normal way.
+
+```csharp
+public class GetAllUserStep : StepBase<ExampleBag>
+{
+    private readonly IUserService _userService;
+
+    public GetAllUserStep(IUserService userService)
+    {
+        _userService = userService;
+    }
+
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        var users = _userService.GetUsers();
+        var output = input with { Users = users };
+        return Next(output);
+    }
+}
+```

@@ -1,0 +1,129 @@
+---
+title: "How the Pipeline works in RoseLine"
+description: "The Pipeline class runs steps in order, passes the bag between them, and returns an ExecutionResult with the final bag state and any error from a failed step."
+---
+
+The `Pipeline` class is the central orchestrator in RoseLine. You give it an initial data bag and a sequence of steps, then call `ExecuteAsync()`. It runs each step in order, passes the output of one step as the input of the next, and stops immediately if any step signals an error or requests a halt. When all steps finish, it returns an `ExecutionResult` that tells you whether execution succeeded and gives you the final state of the bag.
+
+## Two pipeline variants
+
+RoseLine ships two generic forms of `Pipeline` so you can choose how specific your error type is.
+
+| Class | Error type returned | When to use |
+|---|---|---|
+| `Pipeline<TBag, TError>` | Your custom `TError` (must extend `StepError`) | When you need typed error properties like `Code` or `Severity` |
+| `Pipeline<TBag>` | The base `StepError` class | When the default `Message`, `Step`, and `IsUnhandledError` fields are enough |
+
+Both variants expose the same API — `AddStep`, `AddRangeStep`, and `ExecuteAsync`.
+
+## Instantiating a pipeline
+
+Pass the initial bag to the constructor. The bag must not be `null`; an `ArgumentNullException` is thrown otherwise.
+
+```csharp
+// With a custom error type
+var bag = new ExampleBag { Users = [] };
+var pipeline = new Pipeline<ExampleBag, CustomError>(bag);
+
+// With the default StepError
+var pipeline = new Pipeline<ExampleBag>(bag);
+```
+
+## Adding steps
+
+### AddStep()
+
+`AddStep` registers a single step and returns the pipeline instance, which lets you chain calls.
+
+```csharp
+pipeline.AddStep(new GetAllUserStep());
+pipeline.AddStep(new DeleteFirstUserStep());
+
+// Equivalent using method chaining
+pipeline
+    .AddStep(new GetAllUserStep())
+    .AddStep(new DeleteFirstUserStep());
+```
+
+<Note>
+`AddStep` returns the pipeline itself, so you can chain as many calls as you like without storing an intermediate result.
+</Note>
+
+### AddRangeStep()
+
+`AddRangeStep` accepts a `List` of steps and appends them all at once. It also returns the pipeline for chaining.
+
+```csharp
+var steps = new List<IStep<ExampleBag, CustomError>>
+{
+    new GetAllUserStep(),
+    new DeleteFirstUserStep(),
+};
+
+pipeline.AddRangeStep(steps);
+```
+
+## Executing the pipeline
+
+Call `ExecuteAsync()` to run every registered step in sequence. The method returns `Task<ExecutionResult<TBag, TError>>` (or `Task<ExecutionResult<TBag, StepError>>` for the single-type variant).
+
+```csharp
+var result = await pipeline.ExecuteAsync();
+
+if (result.IsSuccess)
+{
+    Console.WriteLine(string.Join(",", result.Bag.Users));
+}
+else
+{
+    Console.WriteLine(
+        $"Step: {result.Error.Step}, " +
+        $"IsUnhandledError: {result.Error.IsUnhandledError}, " +
+        $"Code: {result.Error.Code}");
+}
+```
+
+The loop exits early in two cases:
+
+- **Error** — a step called `ThrowStepError()` or an unhandled exception was caught. `ExecutionResult.IsSuccess` is `false` and `ExecutionResult.Error` is populated.
+- **Stop** — a step called `Stop()`. `ExecutionResult.IsSuccess` is `true` and `ExecutionResult.Error` is `null`. The pipeline halted intentionally before reaching the end.
+
+## Pipeline properties
+
+| Property | Type | Description |
+|---|---|---|
+| `Steps` | `List<IStep<...>>` | The ordered list of all registered steps. |
+| `CurrentStep` | `IStep<...>?` | The step that was last executed. `null` before `ExecuteAsync` is called. |
+| `CurrentStepIndex` | `int` | The zero-based index of the next step to execute. Advances by one after each successful step. |
+
+`CurrentStepIndex` is useful when you want to resume a pipeline from where it left off after running it in stages. Because the index persists, a second call to `ExecuteAsync()` continues from the first unexecuted step rather than replaying the ones that already ran.
+
+## Full example
+
+```csharp
+// 1. Create the initial bag
+var bag = new ExampleBag { Users = [] };
+
+// 2. Create the pipeline
+var pipeline = new Pipeline<ExampleBag, CustomError>(bag);
+
+// 3. Register steps
+pipeline
+    .AddStep(new GetAllUserStep())
+    .AddStep(new DeleteFirstUserStep());
+
+// 4. Execute
+var result = await pipeline.ExecuteAsync();
+
+// 5. Handle the result
+if (result.IsSuccess)
+{
+    // Prints "Osman,Ismail" — first user was removed by DeleteFirstUserStep
+    Console.WriteLine(string.Join(",", result.Bag.Users));
+}
+else
+{
+    Console.WriteLine(
+        $"Failed at step '{result.Error.Step}': {result.Error.Message}");
+}
+```

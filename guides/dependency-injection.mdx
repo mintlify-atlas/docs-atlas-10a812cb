@@ -1,0 +1,110 @@
+---
+title: "Using dependency injection in pipeline steps"
+description: "RoseLine steps are plain C# classes, so constructor injection works with any DI container. Resolve steps from the container and pass them to AddStep()."
+---
+
+RoseLine steps are plain C# classes that inherit from `StepBase<TBag>` or `StepBase<TBag, TError>`. Because there is no special step registry or factory, any dependency injection container that resolves constructor arguments—Microsoft.Extensions.DependencyInjection, Autofac, and others—works without extra configuration.
+
+## The DI step pattern
+
+Declare your dependencies as `readonly` fields and accept them through the constructor. The pipeline instantiates steps however you choose—passing a resolved instance directly is all that is needed.
+
+```csharp
+public class GetAllUserStep : StepBase<ExampleBag>
+{
+    private readonly IUserService _userService;
+
+    // Inject services via constructor
+    public GetAllUserStep(IUserService userService)
+    {
+        _userService = userService;
+    }
+
+    protected override async Task<ExampleBag> ProcessAsync(ExampleBag input)
+    {
+        // Use the injected service
+        var users = _userService.GetUsers();
+
+        var output = input with { Users = users };
+
+        return Next(output);
+    }
+}
+```
+
+Steps are plain C# classes—no attributes, no special interfaces beyond `StepBase`. The pipeline calls `ProcessAsync` on whatever instance you hand to `AddStep`.
+
+## Without a DI container
+
+When you are not using a DI container, resolve dependencies manually and pass the fully-constructed step to the pipeline.
+
+```csharp
+var userService = new UserService(connectionString);
+var step = new GetAllUserStep(userService);
+
+var bag = new ExampleBag { Users = [] };
+var pipeline = new Pipeline<ExampleBag>(bag);
+
+pipeline.AddStep(step);
+
+var result = await pipeline.ExecuteAsync();
+```
+
+## With Microsoft.Extensions.DependencyInjection
+
+Register your services and steps with the service collection, then resolve the pipeline from the container. The example below shows the typical pattern for a console application or a background service.
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+
+var services = new ServiceCollection();
+
+// Register application services
+services.AddScoped<IUserService, UserService>();
+
+// Register steps — transient is the safest default
+services.AddTransient<GetAllUserStep>();
+services.AddTransient<DeleteFirstUserStep>();
+
+var provider = services.BuildServiceProvider();
+
+// Resolve steps from the container
+var getAllUsers    = provider.GetRequiredService<GetAllUserStep>();
+var deleteFirst   = provider.GetRequiredService<DeleteFirstUserStep>();
+
+var bag = new ExampleBag { Users = [] };
+var pipeline = new Pipeline<ExampleBag>(bag);
+
+pipeline.AddStep(getAllUsers);
+pipeline.AddStep(deleteFirst);
+
+var result = await pipeline.ExecuteAsync();
+
+if (result.IsSuccess)
+{
+    Console.WriteLine(string.Join(",", result.Bag.Users));
+}
+```
+
+<Steps>
+  <Step title="Register your services">
+    Add all services that steps depend on to the `IServiceCollection` with the appropriate lifetime (`AddScoped`, `AddSingleton`, or `AddTransient`).
+  </Step>
+  <Step title="Register your steps">
+    Register each step class. Use `AddTransient` unless the step holds shared state that you intentionally want to persist across pipeline runs.
+  </Step>
+  <Step title="Resolve steps and build the pipeline">
+    Call `provider.GetRequiredService<TStep>()` for each step, then add them to the pipeline in the order you want them to execute.
+  </Step>
+  <Step title="Execute and handle the result">
+    Call `ExecuteAsync()` and check `IsSuccess` before using `result.Bag`.
+  </Step>
+</Steps>
+
+<Tip>
+Keep each step focused on a single responsibility and inject only the services it needs. A step with many constructor parameters is a signal that it is doing too much.
+</Tip>
+
+<Note>
+The step constructor is called once—when you resolve or instantiate the step. The step instance is not a singleton unless you explicitly register it as one. If you register a step as a singleton, ensure it and all its dependencies are thread-safe.
+</Note>
